@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER/org.eclipse.jdt.internal.debug.ui.launcher.StandardVMType/JavaSE-1.6"/>
+	<classpathentry kind="lib" path="lib/hadoop-common-2.5.1.jar"/>
+	<classpathentry kind="lib" path="lib/hadoop-mapreduce-client-core-2.5.1.jar"/>
+	<classpathentry kind="lib" path="lib/hbase-client-0.98.11-hadoop2.jar"/>
+	<classpathentry kind="lib" path="lib/hbase-common-0.98.11-hadoop2.jar"/>
+	<classpathentry kind="lib" path="lib/hbase-server-0.98.11-hadoop2.jar"/>
+	<classpathentry kind="lib" path="/Users/ruhansa/Downloads/hbase-0.98.11-hadoop2/lib/hbase-protocol-0.98.11-hadoop2.jar"/>
+	<classpathentry kind="lib" path="/Users/ruhansa/Downloads/hbase-0.98.11-hadoop2/lib/protobuf-java-2.5.0.jar"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>

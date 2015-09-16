@@ -1,0 +1,156 @@
+#!/bin/bash
+#SBATCH --partition=general-compute
+#SBATCH --time=01:00:00
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=2
+#SBATCH --exclusive
+#SBATCH --job-name="stock_volatility_hive"
+#SBATCH --output=test-%J.out
+#SBATCH --mail-user=pchavan2@buffalo.edu
+#Specifies that the job will be requeued after a node failure.
+#The default is that the job will not be requeued.
+#
+#This SLURM script is modified version of the SDSC script
+# found in /util/academic/myhadoop/myHadoop-0.30b/examples.
+# CDC January 29, 2015
+#
+echo "SLURM_JOBID="$SLURM_JOBID
+echo "SLURM_JOB_NODELIST"=$SLURM_JOB_NODELIST
+echo "SLURM_NNODES"=$SLURM_NNODES
+echo "SLURMTMPDIR="$SLURMTMPDIR
+
+echo "working directory = "$SLURM_SUBMIT_DIR
+
+module load java/1.6.0_22
+module load hadoop/2.5.1
+module load hive/0.14.0
+module load myhadoop/0.30b
+module list
+echo "MH_HOME="$MH_HOME
+echo "HADOOP_HOME="$HADOOP_HOME
+echo "Setting HADOOP to use SLURMTMPDIR on the local disk"
+export MH_SCRATCH_DIR=$SLURMTMPDIR
+echo "MH_SCRATCH_DIR="$MH_SCRATCH_DIR
+#### Set this to the directory where Hadoop configs should be generated
+# Don't change the name of this variable (HADOOP_CONF_DIR) as it is
+# required by Hadoop - all config files will be picked up from here
+#
+# Make sure that this is accessible to all nodes
+export HADOOP_CONF_DIR=$SLURM_SUBMIT_DIR/config-$SLURM_JOBID
+export HIVE_CONF_DIR=$SLURM_SUBMIT_DIR/config-$SLURM_JOBID
+echo "create diretory for HIVE metadata"
+### Set up the configuration
+# Make sure number of nodes is the same as what you have requested from PBS
+# usage: $myhadoop-configure.sh -h
+# this is the non-persistent mode
+NPROCS=`srun --nodes=${SLURM_NNODES} bash -c 'hostname' |wc -l`
+echo "-------Set up the configurations for myHadoop"
+$MH_HOME/bin/myhadoop-configure.sh 
+#
+cp $HIVE_HOME/conf/hive-env.sh-sample $HIVE_CONF_DIR/hive-env.sh
+cp $HIVE_HOME/conf/hive-default.xml-sample $HIVE_CONF_DIR/hive-default.xml
+sed -i 's:MY_HIVE_SCRATCH:'"$SLURMTMPDIR"':g' $HIVE_CONF_DIR/hive-default.xml
+cp $HIVE_HOME/conf/hive-log4j.properties-sample $HIVE_CONF_DIR/hive-log4j.properties
+sed -i 's:MY_HIVE_DIR:'"$SLURM_SUBMIT_DIR"':' $HIVE_CONF_DIR/hive-log4j.properties
+ls -l $HADOOP_CONF_DIR
+echo "-------Start hdfs and yarn ---"
+$HADOOP_HOME/sbin/start-all.sh
+#### Format HDFS, if this is the first time or not a persistent instance
+echo "-------Show Report ---"
+#$HADOOP_HOME/bin/hadoop dfsadmin -report
+echo "-------make directory ---"
+# DON'T CHANGE THSES COMMAND, AS YOU WILL NEED THESE DIRECTORY FOR CREATING TABLE
+$HADOOP_HOME/bin/hdfs --config $HADOOP_CONF_DIR dfs -mkdir /tmp
+$HADOOP_HOME/bin/hdfs --config $HADOOP_CONF_DIR dfs -mkdir -p /user/hive/warehouse
+$HADOOP_HOME/bin/hdfs --config $HADOOP_CONF_DIR dfs -chmod g+w /tmp
+$HADOOP_HOME/bin/hdfs --config $HADOOP_CONF_DIR dfs -chmod g+w /user/hive/warehouse
+#echo "-------list warehouse directory ---"
+$HADOOP_HOME/bin/hdfs --config $HADOOP_CONF_DIR dfs -ls /user/hive/warehouse
+
+$HADOOP_HOME/bin/hdfs --config $HADOOP_CONF_DIR dfs -mkdir /hivedata
+$HADOOP_HOME/bin/hdfs --config $HADOOP_CONF_DIR dfs -put $1/*.csv /hivedata/ 
+
+
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS stockdata (date STRING, a STRING, b STRING, c STRING, d STRING, e STRING, Adj_close FLOAT)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY '\054' LINES TERMINATED BY '\n'
+STORED AS TEXTFILE;"
+
+$HIVE_HOME/bin/hive -e "LOAD DATA INPATH 'hdfs:///hivedata' OVERWRITE INTO TABLE stockdata;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s;"
+
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s (filename STRING, d INT, m INT, y INT, Adj_close FLOAT);"
+
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s SELECT regexp_extract(INPUT__FILE__NAME, '(.*?)(//)(.*?csv)', 3), day(date), month(date), year(date), Adj_close FROM stockdata;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s1;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s1 (filename STRING, dmin INT, m INT, y INT);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s1 SELECT filename, MIN(d), m, y from s GROUP BY m,y, filename;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s2;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s2 (filename STRING, dmax INT, m INT, y INT);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s2 SELECT filename, MAX(d), m, y from s GROUP BY m,y, filename;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s3;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s3 (filename STRING, d INT, m INT, y INT, Adj_close FLOAT);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s3 SELECT s.filename, s.d, s.m , s.y, Adj_close FROM s JOIN s1 on (s.d=s1.dmin AND s.y=s1.y AND s.m=s1.m AND s.filename = s1.filename);"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s4;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s4 (filename STRING, d INT, m INT, y INT, Adj_close FLOAT);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s4 SELECT s.filename, s.d, s.m , s.y, Adj_close FROM s JOIN s2 on (s.d=s2.dmax AND s.y=s2.y AND s.m=s2.m AND s.filename= s2.filename);"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s5;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s5 (filename STRING, m INT, y INT, b FLOAT, e FLOAT, x DOUBLE);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s5 SELECT s3.filename, s3.m, s3.y, s3.Adj_close, s4.Adj_close, ((s4.Adj_close - s3.Adj_close)/s3.Adj_close) FROM s3 JOIN s4 on (s3.m = s4.m AND s3.y = s4.y AND s3.filename = s4.filename);"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s6;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s6 (filename STRING, xbar DOUBLE);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s6 SELECT s5.filename, AVG(x) from s5 GROUP BY s5.filename;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s7;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s7 (filename STRING, xxbar DOUBLE);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s7 SELECT s5.filename, (s5.x - s6.xbar)*(s5.x - s6.xbar) FROM s5 JOIN s6 ON (s5.filename = s6.filename);"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s8;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s8 (filename STRING, vol DOUBLE);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s8 SELECT s7.filename, SQRT(SUM(xxbar)/(COUNT(xxbar)-1)) from s7 GROUP BY s7.filename;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s9;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s9 (filename STRING, vol DOUBLE);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s9 SELECT s8.filename, s8.vol FROM s8 WHERE (s8.vol != 0) ORDER BY s8.vol;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s10;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s10 (filename STRING, vol DOUBLE);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s10 SELECT s8.filename, s8.vol FROM s8 WHERE (s8.vol != 0) ORDER BY s8.vol DESC;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s11;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s11 (filename STRING, vol DOUBLE, r INT);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s11 SELECT s10.filename, s10.vol, RANK() OVER (ORDER BY s10.vol DESC ) FROM s10;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s12;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s12 (filename STRING, vol DOUBLE);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s12 SELECT s11.filename, s11.vol FROM s11 WHERE s11.r < 11;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s13;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s13 (filename STRING, vol DOUBLE, r INT);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s13 SELECT s9.filename, s9.vol, RANK() OVER (ORDER BY s9.vol) FROM s9;"
+
+$HIVE_HOME/bin/hive -e "DROP TABLE IF EXISTS s14;"
+$HIVE_HOME/bin/hive -e "CREATE TABLE IF NOT EXISTS s14 (filename STRING, vol DOUBLE);"
+$HIVE_HOME/bin/hive -e "INSERT OVERWRITE TABLE s14 SELECT s13.filename, s13.vol FROM s13 WHERE s13.r < 11;"
+
+$HIVE_HOME/bin/hive -e "SELECT * FROM s12;"
+$HIVE_HOME/bin/hive -e "SELECT * FROM s14;"
+
+
+
+
+
+
+
+
+echo "-------Stop hdfs and yarn ---"
+$HADOOP_HOME/sbin/stop-all.sh
+
+#### Clean up the working directories after job completion
+$MH_HOME/bin/myhadoop-cleanup.sh

@@ -1,0 +1,74 @@
+CREATE TABLE IF NOT EXISTS stockdata (date STRING, a STRING, b STRING, c STRING, d STRING, e STRING, Adj_close FLOAT) 
+ROW FORMAT DELIMITED FIELDS TERMINATED BY "," LINES TERMINATED BY "\n" 
+STORED AS TEXTFILE;
+
+LOAD DATA LOCAL INPATH '/home/cloudera/hw1/bin/small1/*.csv' OVERWRITE INTO TABLE stockdata;
+
+DROP TABLE IF EXISTS s;
+
+CREATE TABLE IF NOT EXISTS s (filename STRING, d INT, m INT, y INT, Adj_close FLOAT); 
+
+INSERT OVERWRITE TABLE s SELECT regexp_extract(INPUT__FILE__NAME, '(.*?)(//)(.*?csv)', 3), day(date), month(date), year(date), Adj_close FROM stockdata;
+
+DROP TABLE IF EXISTS s1;
+CREATE TABLE IF NOT EXISTS s1 (filename STRING, dmin INT, m INT, y INT);
+INSERT OVERWRITE TABLE s1 SELECT filename, MIN(d), m, y from s GROUP BY m,y, filename;
+
+DROP TABLE IF EXISTS s2;
+CREATE TABLE IF NOT EXISTS s2 (filename STRING, dmax INT, m INT, y INT);
+INSERT OVERWRITE TABLE s2 SELECT filename, MAX(d), m, y from s GROUP BY m,y, filename;
+
+
+DROP TABLE IF EXISTS s3;
+CREATE TABLE IF NOT EXISTS s3 (filename STRING, d INT, m INT, y INT, Adj_close FLOAT);
+INSERT OVERWRITE TABLE s3 SELECT s.filename, s.d, s.m , s.y, Adj_close FROM s JOIN s1 on (s.d=s1.dmin AND s.y=s1.y AND s.m=s1.m AND s.filename = s1.filename);  
+--SELECT * FROM s3;
+
+DROP TABLE IF EXISTS s4;
+CREATE TABLE IF NOT EXISTS s4 (filename STRING, d INT, m INT, y INT, Adj_close FLOAT);
+INSERT OVERWRITE TABLE s4 SELECT s.filename, s.d, s.m , s.y, Adj_close FROM s JOIN s2 on (s.d=s2.dmax AND s.y=s2.y AND s.m=s2.m AND s.filename= s2.filename); 
+
+--SELECT * FROM s4;
+
+DROP TABLE IF EXISTS s5;
+CREATE TABLE IF NOT EXISTS s5 (filename STRING, m INT, y INT, b FLOAT, e FLOAT, x DOUBLE);
+INSERT OVERWRITE TABLE s5 SELECT s3.filename, s3.m, s3.y, s3.Adj_close, s4.Adj_close, ((s4.Adj_close - s3.Adj_close)/s3.Adj_close) FROM s3 JOIN s4 on (s3.m = s4.m AND s3.y = s4.y AND s3.filename = s4.filename); 
+
+DROP TABLE IF EXISTS s6;
+CREATE TABLE IF NOT EXISTS s6 (filename STRING, xbar DOUBLE);
+INSERT OVERWRITE TABLE s6 SELECT s5.filename, AVG(x) from s5 GROUP BY s5.filename;
+
+DROP TABLE IF EXISTS s7;
+CREATE TABLE IF NOT EXISTS s7 (filename STRING, xxbar DOUBLE);
+INSERT OVERWRITE TABLE s7 SELECT s5.filename, (s5.x - s6.xbar)*(s5.x - s6.xbar) FROM s5 JOIN s6 ON (s5.filename = s6.filename);
+
+DROP TABLE IF EXISTS s8;
+CREATE TABLE IF NOT EXISTS s8 (filename STRING, vol DOUBLE);
+INSERT OVERWRITE TABLE s8 SELECT s7.filename, SQRT(SUM(xxbar)/(COUNT(xxbar)-1)) from s7 GROUP BY s7.filename;
+
+DROP TABLE IF EXISTS s9;
+CREATE TABLE IF NOT EXISTS s9 (filename STRING, vol DOUBLE);
+INSERT OVERWRITE TABLE s9 SELECT s8.filename, s8.vol FROM s8 WHERE (s8.vol != 0) ORDER BY s8.vol;
+
+DROP TABLE IF EXISTS s10;
+CREATE TABLE IF NOT EXISTS s10 (filename STRING, vol DOUBLE);
+INSERT OVERWRITE TABLE s10 SELECT s8.filename, s8.vol FROM s8 WHERE (s8.vol != 0) ORDER BY s8.vol DESC;
+
+DROP TABLE IF EXISTS s11;
+CREATE TABLE IF NOT EXISTS s11 (filename STRING, vol DOUBLE, r INT);
+INSERT OVERWRITE TABLE s11 SELECT s10.filename, s10.vol, RANK() OVER (ORDER BY s10.vol DESC ) FROM s10; 
+
+DROP TABLE IF EXISTS s12;
+CREATE TABLE IF NOT EXISTS s12 (filename STRING, vol DOUBLE);
+INSERT OVERWRITE TABLE s12 SELECT s11.filename, s11.vol FROM s11 WHERE s11.r < 4; 
+
+DROP TABLE IF EXISTS s13;
+CREATE TABLE IF NOT EXISTS s13 (filename STRING, vol DOUBLE, r INT);
+INSERT OVERWRITE TABLE s13 SELECT s9.filename, s9.vol, RANK() OVER (ORDER BY s9.vol) FROM s9; 
+
+DROP TABLE IF EXISTS s14;
+CREATE TABLE IF NOT EXISTS s14 (filename STRING, vol DOUBLE);
+INSERT OVERWRITE TABLE s14 SELECT s13.filename, s13.vol FROM s13 WHERE s13.r < 4; 
+
+SELECT * FROM s12;
+SELECT * FROM s14;
